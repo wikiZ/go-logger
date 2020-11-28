@@ -97,6 +97,7 @@ func main()  {
         },
         MaxSize : 1024 * 1024,  // File maximum (KB), default 0 is not limited
         MaxLine : 100000, // The maximum number of lines in the file, the default 0 is not limited
+        MaxBak : 5,  // The maximum backup of files, default 0 is not limited
         DateSlice : "d",  // Cut the document by date, support "Y" (year), "m" (month), "d" (day), "H" (hour), default "no".
         JsonFormat: true, // Whether the file data is written to JSON formatting
         Format: "", // JsonFormat is false, logger message written to file format string

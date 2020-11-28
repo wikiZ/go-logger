@@ -20,6 +20,7 @@ func main() {
 		DateSlice:  "d",
 		JsonFormat: false,
 		Format:     "%millisecond_format% [%level_string%] [%file%:%line%] %body%",
+		MaxBak:     5,
 	}
 	logger.Attach("file", go_logger.LOGGER_LEVEL_DEBUG, fileConfig)
 	logger.SetAsync()

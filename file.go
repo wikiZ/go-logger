@@ -3,9 +3,12 @@ package go_logger
 import (
 	"errors"
 	"github.com/phachon/go-logger/utils"
+	"io/ioutil"
 	"os"
 	"path"
 	"reflect"
+	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -60,6 +63,9 @@ type FileConfig struct {
 
 	// max file line
 	MaxLine int64
+
+	// max file bak
+	MaxBak int64
 
 	// file slice by date
 	// "y" Log files are cut through year
@@ -263,21 +269,21 @@ func (fw *FileWriter) writeByConfig(config *FileConfig, loggerMsg *loggerMessage
 
 	if config.DateSlice != "" {
 		// file slice by date
-		err := fw.sliceByDate(config.DateSlice)
+		err := fw.sliceByDate(config.DateSlice, config.MaxBak)
 		if err != nil {
 			return err
 		}
 	}
 	if config.MaxLine != 0 {
 		// file slice by line
-		err := fw.sliceByFileLines(config.MaxLine)
+		err := fw.sliceByFileLines(config.MaxLine, config.MaxBak)
 		if err != nil {
 			return err
 		}
 	}
 	if config.MaxSize != 0 {
 		// file slice by size
-		err := fw.sliceByFileSize(config.MaxSize)
+		err := fw.sliceByFileSize(config.MaxSize, config.MaxBak)
 		if err != nil {
 			return err
 		}
@@ -304,7 +310,7 @@ func (fw *FileWriter) writeByConfig(config *FileConfig, loggerMsg *loggerMessage
 }
 
 //slice file by date (y, m, d, h, i, s), rename file is file_time.log and recreate file
-func (fw *FileWriter) sliceByDate(dataSlice string) error {
+func (fw *FileWriter) sliceByDate(dataSlice string, maxBak int64) error {
 
 	filename := fw.filename
 	filenameSuffix := path.Ext(filename)
@@ -313,28 +319,42 @@ func (fw *FileWriter) sliceByDate(dataSlice string) error {
 
 	oldFilename := ""
 	isHaveSlice := false
+	timeFormat := ""
 	if (dataSlice == FILE_SLICE_DATE_YEAR) &&
 		(startTime.Year() != nowTime.Year()) {
 		isHaveSlice = true
-		oldFilename = strings.Replace(filename, filenameSuffix, "", 1) + "_" + startTime.Format("2006") + filenameSuffix
+		timeFormat = "2006"
+		oldFilename = strings.Replace(filename, filenameSuffix, "", 1) + "_" + startTime.Format(timeFormat) + filenameSuffix
 	}
 	if (dataSlice == FILE_SLICE_DATE_MONTH) &&
 		(startTime.Format("200601") != nowTime.Format("200601")) {
 		isHaveSlice = true
-		oldFilename = strings.Replace(filename, filenameSuffix, "", 1) + "_" + startTime.Format("200601") + filenameSuffix
+		timeFormat = "200601"
+		oldFilename = strings.Replace(filename, filenameSuffix, "", 1) + "_" + startTime.Format(timeFormat) + filenameSuffix
 	}
 	if (dataSlice == FILE_SLICE_DATE_DAY) &&
 		(startTime.Format("20060102") != nowTime.Format("20060102")) {
 		isHaveSlice = true
-		oldFilename = strings.Replace(filename, filenameSuffix, "", 1) + "_" + startTime.Format("20060102") + filenameSuffix
+		timeFormat = "20060102"
+		oldFilename = strings.Replace(filename, filenameSuffix, "", 1) + "_" + startTime.Format(timeFormat) + filenameSuffix
 	}
 	if (dataSlice == FILE_SLICE_DATE_HOUR) &&
 		(startTime.Format("2006010215") != startTime.Format("2006010215")) {
 		isHaveSlice = true
-		oldFilename = strings.Replace(filename, filenameSuffix, "", 1) + "_" + startTime.Format("2006010215") + filenameSuffix
+		timeFormat = "2006010215"
+		oldFilename = strings.Replace(filename, filenameSuffix, "", 1) + "_" + startTime.Format(timeFormat) + filenameSuffix
 	}
 
 	if isHaveSlice == true {
+
+		// check bak num
+		if maxBak > 0 {
+			err := fw.cleanUpBackupFiles(maxBak, timeFormat)
+			if err != nil {
+				return err
+			}
+		}
+
 		//close file handle
 		fw.writer.Close()
 		err := os.Rename(fw.filename, oldFilename)
@@ -351,16 +371,26 @@ func (fw *FileWriter) sliceByDate(dataSlice string) error {
 }
 
 //slice file by line, if maxLine < fileLine, rename file is file_line_maxLine_time.log and recreate file
-func (fw *FileWriter) sliceByFileLines(maxLine int64) error {
+func (fw *FileWriter) sliceByFileLines(maxLine int64, maxBak int64) error {
 
 	filename := fw.filename
 	filenameSuffix := path.Ext(filename)
 	startLine := fw.startLine
+	timeFormat := "2006-01-02-15.04.05.9999"
 
 	if startLine >= maxLine {
+
+		// check bak num
+		if maxBak > 0 {
+			err := fw.cleanUpBackupFiles(maxBak, timeFormat)
+			if err != nil {
+				return err
+			}
+		}
+
 		//close file handle
 		fw.writer.Close()
-		timeFlag := time.Now().Format("2006-01-02-15.04.05.9999")
+		timeFlag := time.Now().Format(timeFormat)
 		oldFilename := strings.Replace(filename, filenameSuffix, "", 1) + "." + timeFlag + filenameSuffix
 		err := os.Rename(filename, oldFilename)
 		if err != nil {
@@ -376,22 +406,110 @@ func (fw *FileWriter) sliceByFileLines(maxLine int64) error {
 }
 
 //slice file by size, if maxSize < fileSize, rename file is file_size_maxSize_time.log and recreate file
-func (fw *FileWriter) sliceByFileSize(maxSize int64) error {
+func (fw *FileWriter) sliceByFileSize(maxSize int64, maxBak int64) error {
 
 	filename := fw.filename
 	filenameSuffix := path.Ext(filename)
 	nowSize, _ := fw.getFileSize(filename)
+	timeFormat := "2006-01-02-15.04.05.9999"
 
 	if nowSize >= maxSize {
+		// check bak num
+		if maxBak > 0 {
+			err := fw.cleanUpBackupFiles(maxBak, timeFormat)
+			if err != nil {
+				return err
+			}
+		}
+
 		//close file handle
 		fw.writer.Close()
-		timeFlag := time.Now().Format("2006-01-02-15.04.05.9999")
+		timeFlag := time.Now().Format(timeFormat)
 		oldFilename := strings.Replace(filename, filenameSuffix, "", 1) + "." + timeFlag + filenameSuffix
 		err := os.Rename(filename, oldFilename)
 		if err != nil {
 			return err
 		}
 		err = fw.initFile()
+		if err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+//clean up backup files
+//params : maxBak int64, timeFormat string
+//return : error
+func (fw *FileWriter) cleanUpBackupFiles(maxBak int64, timeFormat string) error {
+	filename := fw.filename
+	filenameSuffix := path.Ext(filename)
+
+	dirPath, oldFilename := path.Split(filename)
+	oldFilename = strings.Replace(oldFilename, filenameSuffix, "", 1)
+
+	dir, err := ioutil.ReadDir(dirPath)
+	if err != nil {
+		return err
+	}
+
+	p := ""
+	fileConnect := ""
+	switch timeFormat {
+	case "2006-01-02-15.04.05.9999":
+		p = "[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{2}.[0-9]{2}.[0-9]{2}.[0-9]{0,4}"
+		fileConnect = "."
+	case "2006":
+		p = "[0-9]{4}"
+		fileConnect = "_"
+	case "200601":
+		p = "[0-9]{6}"
+		fileConnect = "_"
+	case "20060102":
+		p = "[0-9]{8}"
+		fileConnect = "_"
+	case "2006010215":
+		p = "[0-9]{10}"
+		fileConnect = "_"
+	}
+
+	if p == "" {
+		return errors.New("time format can not switch expr")
+	}
+
+	r, _ := regexp.Compile(p)
+
+	bakFileMap := make(map[int]string)
+	bakTimeSlice := make([]int, 0, maxBak)
+	for _, fi := range dir {
+		if fi.IsDir() {
+			continue
+		}
+		match, err := regexp.MatchString(oldFilename+fileConnect+p+filenameSuffix, fi.Name())
+		if err != nil {
+			return err
+		}
+		if !match {
+			continue
+		}
+		matchStr := r.FindString(fi.Name())
+		if matchStr == "" {
+			continue
+		}
+		t, _ := time.Parse(timeFormat, matchStr)
+		bakFileMap[int(t.Unix())] = fi.Name()
+		bakTimeSlice = append(bakTimeSlice, int(t.Unix()))
+	}
+
+	if int64(len(bakTimeSlice)) < maxBak {
+		return nil
+	}
+
+	sort.Ints(bakTimeSlice)
+
+	for _, bakTime := range bakTimeSlice[:int64(len(bakTimeSlice))-maxBak+1] {
+		err := os.Remove(bakFileMap[bakTime])
 		if err != nil {
 			return err
 		}
